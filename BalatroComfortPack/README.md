@@ -97,7 +97,7 @@ Do not place the mod inside an extra nested folder such as:
 
 - The mod does not edit Balatro's installed game files.
 - The mod stores its own settings through Steamodded's normal mod config system.
-- Run History stores run records in Balatro profile/settings data and caps the record list to avoid unlimited growth.
+- Run History stores run records in their own `run_archive.jkr` file under the profile folder (not in `profile.jkr`), keeping up to 50 runs by default with a file-size safeguard to avoid unlimited growth.
 - Score Preview is a sandboxed estimate. It is meant as a reference, not a guaranteed replacement for the real scoring animation.
 - Step Back and Shop Undo restore checkpoints through Balatro's run save/load data shape. Mods that keep unsaved external state may not restore perfectly.
 

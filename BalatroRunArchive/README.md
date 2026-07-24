@@ -57,11 +57,11 @@ The final layout should be:
 
 ## Compatibility Notes
 
-The mod stores archive data inside Balatro's current profile data and saves it through Balatro's normal settings-save path. It does not edit Balatro's game files, Steamodded files, or Lovely files.
+The mod stores archive data in its own `run_archive.jkr` file inside the current profile's folder, loaded lazily and saved independently of `profile.jkr`. It does not edit Balatro's game files, Steamodded files, or Lovely files.
 
 Known limits:
 
-- The history keeps up to 500 recent runs so profile data does not grow without limit.
+- The history keeps up to 50 recent runs by default (configurable via `run_history_max_runs`), with an additional size safeguard, so the archive file can never approach LuaJIT's per-chunk constant limit.
 - Runs started before installing this mod may only get partial records if continued later.
 - Mods that replace the same start-run, shop, use-card, win, or game-over functions may affect what gets recorded.
 
