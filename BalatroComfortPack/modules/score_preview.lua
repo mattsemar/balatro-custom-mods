@@ -1084,13 +1084,13 @@ end
 
 local function set_idle()
     ScorePreview.ui.line = preview_idle_text()
-    ScorePreview.ui.exchange = ""
+    -- Keep the last computed exchange rate visible (e.g. in the shop) instead of
+    -- clearing it; it is refreshed as soon as a new hand is previewed.
     ScorePreview.ui.target_reached = false
 end
 
 local function set_unavailable(reason)
     ScorePreview.ui.line = preview_idle_text()
-    ScorePreview.ui.exchange = ""
     ScorePreview.ui.target_reached = false
 end
 
@@ -1114,7 +1114,6 @@ local function apply_result(result)
 
     if result.mode == "hidden" then
         ScorePreview.ui.line = preview_unknown_text()
-        ScorePreview.ui.exchange = ""
         ScorePreview.ui.target_reached = false
         return
     end
