@@ -1253,9 +1253,12 @@ local function joker_limit()
     return (G and G.jokers and G.jokers.config and tonumber(G.jokers.config.card_limit)) or 5
 end
 
-local function is_shop_joker(card)
-    return card and G and G.shop_jokers and card.area == G.shop_jokers
-        and card.ability and card.ability.set == "Joker"
+-- A joker you could take into your loadout: one being sold in the shop, or one
+-- being offered inside an opened booster (Buffoon) pack.
+local function is_swappable_joker(card)
+    if not (card and G and card.ability and card.ability.set == "Joker") then return false end
+    local area = card.area
+    return area ~= nil and (area == G.shop_jokers or area == G.pack_cards)
 end
 
 local function last_play_cards()
@@ -1323,11 +1326,12 @@ local function swap_delta_text(pct)
     return "Swap Δ " .. body
 end
 
--- Returns true if it produced a shop-swap readout (so update() should stop).
+-- Returns true if it produced a swap readout (so update() should stop). Only ever
+-- called outside SELECTING_HAND; the hovered-area check limits it to the shop and
+-- open-pack contexts, so no explicit state whitelist is needed (covers all pack types).
 local function update_swap_readout()
     if not show_swap() then return false end
-    if not (G and G.STATE and G.STATES and G.STATE == G.STATES.SHOP) then return false end
-    if not is_shop_joker(ScorePreview.hovered) then return false end
+    if not is_swappable_joker(ScorePreview.hovered) then return false end
 
     local candidate = ScorePreview.hovered
     local sig = swap_signature(candidate)
