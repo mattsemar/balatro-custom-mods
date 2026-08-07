@@ -1,6 +1,26 @@
 local ScorePreview = rawget(_G, "BalatroScorePreview") or {}
 _G.BalatroScorePreview = ScorePreview
 
+local current_mod = SMODS and SMODS.current_mod or nil
+
+local function mod_config()
+    return current_mod and type(current_mod.config) == "table" and current_mod.config or nil
+end
+
+-- Expected-value preview is opt-in (mod config key `score_preview_ev`). When off, the
+-- preview stays a pure deterministic floor. `score_preview_ev_samples` tunes accuracy.
+local function show_ev()
+    local cfg = mod_config()
+    return cfg ~= nil and cfg.score_preview_ev == true
+end
+
+local function ev_samples()
+    local cfg = mod_config()
+    local n = cfg and tonumber(cfg.score_preview_ev_samples) or nil
+    if n and n >= 1 then return math.min(math.floor(n), 500) end
+    return 40
+end
+
 local function language_key()
     local lang = G and G.SETTINGS and (G.SETTINGS.real_language or G.SETTINGS.language) or nil
     return type(lang) == "string" and lang:lower() or ""
@@ -554,7 +574,7 @@ local function restore_state(snapshot)
     percent_delta = snapshot.globals.percent_delta
 end
 
-local function with_sandbox(fn)
+local function with_sandbox(fn, allow_prob)
     local refs = {
         delay = delay,
         update_hand_text = update_hand_text,
@@ -598,8 +618,11 @@ local function with_sandbox(fn)
     end
     if SMODS then
         SMODS.no_resolve = true
-        SMODS.pseudorandom_probability = function()
-            return false
+        -- Floor mode forces probabilistic effects off; EV sampling lets them roll.
+        if not allow_prob then
+            SMODS.pseudorandom_probability = function()
+                return false
+            end
         end
     end
 
@@ -1056,6 +1079,60 @@ local function calculate_basic(selected)
     }
 end
 
+-- Give each EV sample a fresh RNG whose seed is decoupled from the live next draw, so
+-- sampling reveals the distribution (an average) but never the actual upcoming roll.
+local function reseed_for_sample(i)
+    if not G or not G.GAME then return end
+    local base = (G.GAME.pseudorandom and G.GAME.pseudorandom.seed) or ""
+    G.GAME.pseudorandom = { seed = tostring(base) .. "|ev" .. tostring(i) }
+end
+
+-- Run the real scoring n+1 times from the same board: pass 0 is the deterministic floor
+-- (probabilities off), passes 1..n roll for real from independent seeds. State is reset
+-- before every pass and restored afterwards, so the live game is untouched.
+local function sample_scoring(selected, snapshot, n)
+    local floor, totals = nil, {}
+    for i = 0, math.max(0, n) do
+        restore_state(snapshot)
+        local allow_prob = i > 0
+        if allow_prob then reseed_for_sample(i) end
+        local ok, result = with_sandbox(function()
+            return run_true_scoring(selected)
+        end, allow_prob)
+        if ok and result and result.total then
+            if i == 0 then
+                floor = result
+            else
+                totals[#totals + 1] = result.total
+            end
+        end
+    end
+    restore_state(snapshot)
+    return floor, totals
+end
+
+-- Attach expected value and blind-clear rate to the floor result, but only when the
+-- samples actually differ from the floor (i.e. luck is in play).
+local function summarize_ev(floor, totals)
+    if not floor then return nil end
+    if type(totals) ~= "table" or #totals == 0 then return floor end
+
+    local sum, clears, varies = 0, 0, false
+    local cur = safe_number(G.GAME.chips, 0)
+    local target = safe_number(G.GAME.blind and G.GAME.blind.chips, 0)
+    for _, t in ipairs(totals) do
+        sum = sum + t
+        if target > 0 and (cur + t) >= target then clears = clears + 1 end
+        if t ~= floor.total then varies = true end
+    end
+    if varies then
+        floor.ev = math.floor(sum / #totals + 0.5)
+        floor.clear_rate = target > 0 and math.floor((100 * clears / #totals) + 0.5) or nil
+        floor.random = true
+    end
+    return floor
+end
+
 local function calculate_preview()
     if not G or not G.GAME or not G.STATES or G.STATE ~= G.STATES.SELECTING_HAND then return nil end
     if not G.hand or not G.hand.highlighted or #G.hand.highlighted == 0 then return nil end
@@ -1068,6 +1145,13 @@ local function calculate_preview()
     end
 
     local snapshot = capture_state()
+
+    if show_ev() then
+        local floor, totals = sample_scoring(selected, snapshot, ev_samples())
+        if floor then return summarize_ev(floor, totals) end
+        return calculate_basic(selected)
+    end
+
     local ok, result = with_sandbox(function()
         return run_true_scoring(selected)
     end)
@@ -1119,8 +1203,13 @@ local function apply_result(result)
     end
 
     ScorePreview.ui.target_reached = result_reaches_blind(result)
-    ScorePreview.ui.line = preview_prefix() .. fmt_number(result.total)
+    local line = preview_prefix() .. fmt_number(result.total)
         .. (ScorePreview.ui.target_reached and preview_enough_text() or "")
+    if result.random and result.ev then
+        line = line .. "  ~" .. fmt_number(result.ev)
+        if result.clear_rate then line = line .. " " .. tostring(result.clear_rate) .. "%" end
+    end
+    ScorePreview.ui.line = line
     ScorePreview.ui.exchange = exchange_rate_text(result.chips, result.mult)
 end
 
