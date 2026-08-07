@@ -1,9 +1,10 @@
-local SupernovaTracker = rawget(_G, "BalatroSupernovaTracker") or {}
-_G.BalatroSupernovaTracker = SupernovaTracker
+local MoreJokerInfo = rawget(_G, "BalatroMoreJokerInfo") or rawget(_G, "BalatroSupernovaTracker") or {}
+_G.BalatroMoreJokerInfo = MoreJokerInfo
+_G.BalatroSupernovaTracker = MoreJokerInfo
 
-local MOD_VERSION = "1.0.2"
+local MOD_VERSION = "1.0.3"
 
-SupernovaTracker.version = MOD_VERSION
+MoreJokerInfo.version = MOD_VERSION
 
 local function language_key()
     local lang = G and G.SETTINGS and (G.SETTINGS.real_language or G.SETTINGS.language) or nil
@@ -31,19 +32,31 @@ end
 
 local text = {
     en = {
-        title = "Current Supernova bonus",
-        none = "No poker hands played yet",
-        plus = "+"
+        supernova_title = "Supernova hand bonuses",
+        supernova_none = "No poker hands played yet",
+        baseball_title = "Current Baseball Card bonus",
+        baseball_jokers = "Uncommon Jokers",
+        baseball_total = "Total Mult",
+        plus = "+",
+        times = "X"
     },
     zh_cn = {
-        title = "当前超新星加成",
-        none = "还没有打出过牌型",
-        plus = "+"
+        supernova_title = "超新星牌型加成",
+        supernova_none = "还没有打出过牌型",
+        baseball_title = "当前棒球卡倍率",
+        baseball_jokers = "罕见小丑牌",
+        baseball_total = "总倍率",
+        plus = "+",
+        times = "×"
     },
     zh_tw = {
-        title = "目前超新星加成",
-        none = "還沒有打出過牌型",
-        plus = "+"
+        supernova_title = "超新星牌型加成",
+        supernova_none = "還沒有打出過牌型",
+        baseball_title = "目前棒球卡倍率",
+        baseball_jokers = "罕見小丑牌",
+        baseball_total = "總倍率",
+        plus = "+",
+        times = "×"
     }
 }
 
@@ -133,11 +146,21 @@ local function localized_poker_hand(key)
     return fallbacks[key] or poker_hand_fallbacks.en[key] or tostring(key)
 end
 
+local function center(card)
+    return card and card.config and card.config.center or nil
+end
+
+local function center_key(card)
+    local card_center = center(card)
+    return card_center and card_center.key or nil
+end
+
 local function is_supernova(card)
-    return card
-        and card.config
-        and card.config.center
-        and card.config.center.key == "j_supernova"
+    return center_key(card) == "j_supernova"
+end
+
+local function is_baseball(card)
+    return center_key(card) == "j_baseball"
 end
 
 local function first_colour(...)
@@ -152,17 +175,27 @@ local function ui_colour(key)
     return G and G.C and G.C.UI and G.C.UI[key] or nil
 end
 
+local function tracker_black()
+    local colours = G and G.C or {}
+    return colours.BLACK or ui_colour("TRANSPARENT_DARK") or ui_colour("BACKGROUND_INACTIVE") or { 0, 0, 0, 0.95 }
+end
+
+local function tracker_white()
+    local colours = G and G.C or {}
+    return first_colour(colours.WHITE, ui_colour("TEXT_LIGHT"))
+end
+
 local function tracker_gold()
     local colours = G and G.C or {}
     return first_colour(colours.GOLD, colours.MONEY, colours.ORANGE, colours.MULT, ui_colour("TEXT_LIGHT"))
 end
 
 local function hand_name_scale(name)
-    if is_chinese_language() then return 0.18 end
+    if is_chinese_language() then return 0.24 end
     local length = type(name) == "string" and #name or 0
-    if length >= 14 then return 0.145 end
-    if length >= 11 then return 0.155 end
-    return 0.17
+    if length >= 15 then return 0.185 end
+    if length >= 12 then return 0.2 end
+    return 0.22
 end
 
 local function collect_hand_rows()
@@ -219,114 +252,73 @@ local function make_text(text_value, colour, scale)
     }
 end
 
-local function make_hand_chip(row)
-    local bg = row.played > 0 and G.C.UI.TRANSPARENT_DARK or G.C.UI.BACKGROUND_INACTIVE
+local function make_info_chip(label, value, value_colour, label_scale, value_scale, minw)
     return {
         n = G.UIT.C,
         config = {
             align = "cm",
-            padding = 0.035,
-            r = 0.06,
-            colour = bg,
-            minw = 1.52,
-            minh = 0.30
+            padding = 0.045,
+            r = 0.08,
+            colour = tracker_black(),
+            minw = minw or 2.18,
+            minh = 0.42
         },
         nodes = {
-            make_text(row.name, G.C.UI.TEXT_LIGHT, hand_name_scale(row.name)),
-            make_text(" " .. loc("plus") .. tostring(row.played), tracker_gold(), is_chinese_language() and 0.21 or 0.19)
+            make_text(label, tracker_white(), label_scale or 0.23),
+            make_text(" " .. value, value_colour or tracker_gold(), value_scale or 0.26)
         }
     }
 end
 
-local function build_hand_grid(rows)
-    if #rows == 0 then
-        return {
-            {
-                n = G.UIT.R,
-                config = { align = "cm", padding = 0.02 },
-                nodes = { make_text(loc("none"), G.C.UI.TEXT_INACTIVE, 0.21) }
-            }
-        }
-    end
-
-    local grid = {}
-    local index = 1
-    while index <= #rows do
-        local row_nodes = {}
-        for _ = 1, 3 do
-            if rows[index] then
-                row_nodes[#row_nodes + 1] = make_hand_chip(rows[index])
-            end
-            index = index + 1
-        end
-        grid[#grid + 1] = {
-            n = G.UIT.R,
-            config = { align = "cm", padding = 0.025 },
-            nodes = row_nodes
-        }
-    end
-
-    return grid
-end
-
-local function build_tracker_block()
-    local rows = collect_hand_rows()
-    local nodes = {
-        {
-            n = G.UIT.R,
-            config = { align = "cm", padding = 0.02 },
-            nodes = {
-                make_text(loc("title"), G.C.ORANGE, is_chinese_language() and 0.24 or 0.22)
-            }
-        }
-    }
-
-    local grid = build_hand_grid(rows)
-    for i = 1, #grid do
-        nodes[#nodes + 1] = grid[i]
-    end
-
+local function make_banner(label, scale)
     return {
-        n = G.UIT.R,
+        n = G.UIT.C,
         config = {
             align = "cm",
-            padding = 0.05,
+            padding = 0.045,
             r = 0.08,
-            colour = G.C.UI.TRANSPARENT_DARK
+            colour = tracker_black(),
+            minw = 4.48,
+            minh = 0.38
         },
-        nodes = {
-            {
-                n = G.UIT.C,
-                config = { align = "cm", padding = 0.035 },
-                nodes = nodes
-            }
-        }
+        nodes = { make_text(label, tracker_white(), scale or (is_chinese_language() and 0.27 or 0.25)) }
     }
 end
 
-local function can_show_tracker()
+local function make_hand_chip(row)
+    return make_info_chip(
+        row.name,
+        loc("plus") .. tostring(row.played),
+        tracker_gold(),
+        hand_name_scale(row.name),
+        is_chinese_language() and 0.28 or 0.26,
+        2.18
+    )
+end
+
+local function can_show_supernova()
     return G and G.GAME and type(G.GAME.hands) == "table"
 end
 
-local function build_tracker_desc_rows()
+local function can_show_baseball()
+    return G and G.jokers and type(G.jokers.cards) == "table"
+end
+
+local function build_supernova_desc_rows()
     local rows = collect_hand_rows()
     local desc_rows = {
-        {
-            make_text(loc("title"), G.C.ORANGE, is_chinese_language() and 0.24 or 0.22)
-        }
+        { make_banner(loc("supernova_title")) }
     }
 
     if #rows == 0 then
-        desc_rows[#desc_rows + 1] = {
-            make_text(loc("none"), G.C.UI.TEXT_INACTIVE, 0.21)
-        }
+        desc_rows[#desc_rows + 1] = { make_banner(loc("supernova_none"), is_chinese_language() and 0.24 or 0.22) }
         return desc_rows
     end
 
     local index = 1
     while index <= #rows do
         local row_nodes = {}
-        for _ = 1, 3 do
+        for _ = 1, 2 do
             if rows[index] then
                 row_nodes[#row_nodes + 1] = make_hand_chip(rows[index])
             end
@@ -338,10 +330,83 @@ local function build_tracker_desc_rows()
     return desc_rows
 end
 
-local function append_tracker(ui)
-    if type(ui) ~= "table" or type(ui.main) ~= "table" or not can_show_tracker() then return ui end
+local function is_joker_card(card)
+    local card_center = center(card)
+    return card
+        and (card.ability and card.ability.set == "Joker" or card_center and card_center.set == "Joker")
+end
 
-    for _, row in ipairs(build_tracker_desc_rows()) do
+local function is_uncommon_rarity(rarity)
+    if rarity == 2 then return true end
+    if type(rarity) ~= "string" then return false end
+
+    local normalized = rarity:lower()
+    return normalized == "2" or normalized == "uncommon"
+end
+
+local function is_uncommon_joker(card)
+    local card_center = center(card)
+    return is_joker_card(card) and card_center and is_uncommon_rarity(card_center.rarity)
+end
+
+local function baseball_xmult(card)
+    local ability_extra = card and card.ability and card.ability.extra or nil
+    if type(ability_extra) == "number" then return ability_extra end
+    if type(ability_extra) == "table" then
+        if type(ability_extra.x_mult) == "number" then return ability_extra.x_mult end
+        if type(ability_extra.Xmult) == "number" then return ability_extra.Xmult end
+        if type(ability_extra.xmult) == "number" then return ability_extra.xmult end
+    end
+
+    local card_center = center(card)
+    local center_extra = card_center and card_center.config and card_center.config.extra or nil
+    if type(center_extra) == "number" then return center_extra end
+    return 1.5
+end
+
+local function uncommon_joker_count(baseball_card)
+    if not can_show_baseball() then return 0 end
+
+    local count = 0
+    for _, joker in ipairs(G.jokers.cards) do
+        if joker ~= baseball_card and is_uncommon_joker(joker) then
+            count = count + 1
+        end
+    end
+    return count
+end
+
+local function trim_number(value)
+    local formatted = string.format("%.2f", value or 0)
+    formatted = formatted:gsub("0+$", ""):gsub("%.$", "")
+    return formatted
+end
+
+local function format_xmult(value)
+    return loc("times") .. trim_number(value)
+end
+
+local function build_baseball_desc_rows(card)
+    local count = uncommon_joker_count(card)
+    local per_joker = baseball_xmult(card)
+    local total = 1
+    for _ = 1, count do
+        total = total * per_joker
+    end
+
+    return {
+        { make_banner(loc("baseball_title")) },
+        {
+            make_info_chip(loc("baseball_jokers"), tostring(count), tracker_gold(), is_chinese_language() and 0.24 or 0.21, 0.28, 2.18),
+            make_info_chip(loc("baseball_total"), format_xmult(total), tracker_gold(), is_chinese_language() and 0.24 or 0.21, 0.28, 2.18)
+        }
+    }
+end
+
+local function append_desc_rows(ui, rows)
+    if type(ui) ~= "table" or type(ui.main) ~= "table" then return ui end
+
+    for _, row in ipairs(rows) do
         if type(row) == "table" and row.n == nil then
             ui.main[#ui.main + 1] = row
         end
@@ -349,16 +414,29 @@ local function append_tracker(ui)
     return ui
 end
 
-if Card and Card.generate_UIBox_ability_table and not SupernovaTracker.hooked then
-    SupernovaTracker.original_generate_UIBox_ability_table = Card.generate_UIBox_ability_table
+local function append_supernova_info(ui)
+    if not can_show_supernova() then return ui end
+    return append_desc_rows(ui, build_supernova_desc_rows())
+end
+
+local function append_baseball_info(ui, card)
+    if not can_show_baseball() then return ui end
+    return append_desc_rows(ui, build_baseball_desc_rows(card))
+end
+
+if Card and Card.generate_UIBox_ability_table and not MoreJokerInfo.hooked then
+    MoreJokerInfo.original_generate_UIBox_ability_table = Card.generate_UIBox_ability_table
 
     function Card:generate_UIBox_ability_table()
-        local ui = SupernovaTracker.original_generate_UIBox_ability_table(self)
+        local ui = MoreJokerInfo.original_generate_UIBox_ability_table(self)
         if is_supernova(self) then
-            return append_tracker(ui)
+            return append_supernova_info(ui)
+        end
+        if is_baseball(self) then
+            return append_baseball_info(ui, self)
         end
         return ui
     end
 
-    SupernovaTracker.hooked = true
+    MoreJokerInfo.hooked = true
 end
