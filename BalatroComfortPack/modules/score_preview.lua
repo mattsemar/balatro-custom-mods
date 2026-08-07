@@ -18,7 +18,7 @@ local function ev_samples()
     local cfg = mod_config()
     local n = cfg and tonumber(cfg.score_preview_ev_samples) or nil
     if n and n >= 1 then return math.min(math.floor(n), 500) end
-    return 40
+    return 20
 end
 
 -- Shop joker-swap impact (raw Δ% of the last hand played). Opt-in.
@@ -580,6 +580,10 @@ local function restore_state(snapshot)
     percent_delta = snapshot.globals.percent_delta
 end
 
+-- Set by the floor-pass probability stub when a probabilistic gate is consulted,
+-- so EV sampling only runs for hands that actually contain randomness.
+local ev_probe = { seen = false }
+
 local function with_sandbox(fn, allow_prob)
     local refs = {
         delay = delay,
@@ -625,8 +629,11 @@ local function with_sandbox(fn, allow_prob)
     if SMODS then
         SMODS.no_resolve = true
         -- Floor mode forces probabilistic effects off; EV sampling lets them roll.
+        -- The stub also records whether any probability gate was consulted, so the
+        -- EV path can skip sampling entirely on hands with no randomness.
         if not allow_prob then
             SMODS.pseudorandom_probability = function()
+                ev_probe.seen = true
                 return false
             end
         end
@@ -1097,20 +1104,34 @@ end
 -- (probabilities off), passes 1..n roll for real from independent seeds. State is reset
 -- before every pass and restored afterwards, so the live game is untouched.
 local function sample_scoring(selected, snapshot, n)
-    local floor, totals = nil, {}
-    for i = 0, math.max(0, n) do
+    -- Deterministic floor pass. Its stub also records whether any probability gate
+    -- was consulted (ev_probe.seen).
+    restore_state(snapshot)
+    ev_probe.seen = false
+    local ok, floor = with_sandbox(function()
+        return run_true_scoring(selected)
+    end, false)
+    if not (ok and floor and floor.total) then
         restore_state(snapshot)
-        local allow_prob = i > 0
-        if allow_prob then reseed_for_sample(i) end
-        local ok, result = with_sandbox(function()
+        return nil, {}
+    end
+
+    -- No randomness in this hand -> no sampling. This is the common case and keeps
+    -- ordinary selections at a single scoring pass (no UI lag).
+    if not ev_probe.seen then
+        restore_state(snapshot)
+        return floor, {}
+    end
+
+    local totals = {}
+    for i = 1, math.max(0, n) do
+        restore_state(snapshot)
+        reseed_for_sample(i)
+        local sok, result = with_sandbox(function()
             return run_true_scoring(selected)
-        end, allow_prob)
-        if ok and result and result.total then
-            if i == 0 then
-                floor = result
-            else
-                totals[#totals + 1] = result.total
-            end
+        end, true)
+        if sok and result and result.total then
+            totals[#totals + 1] = result.total
         end
     end
     restore_state(snapshot)
