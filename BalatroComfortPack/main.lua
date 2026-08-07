@@ -3,7 +3,7 @@ _G.BalatroComfortPack = Suite
 _G.BalatroBetterExperience = Suite
 _G.BalatroUtilitySuite = Suite
 
-Suite.version = "1.0.0"
+Suite.version = "1.0.4"
 Suite.status = Suite.status or {}
 Suite.ui = Suite.ui or {}
 
@@ -52,14 +52,14 @@ local features = {
         standalone_id = "BalatroSupernovaTracker",
         global = "BalatroSupernovaTracker",
         label = {
-            en = "Supernova Tracker",
-            zh_cn = "超新星追踪",
-            zh_tw = "超新星追蹤"
+            en = "More Joker Info",
+            zh_cn = "更多小丑牌信息",
+            zh_tw = "更多小丑牌資訊"
         },
         desc = {
-            en = "Shows current bonuses for each poker hand.",
-            zh_cn = "显示每种牌型的当前加成。",
-            zh_tw = "顯示每種牌型的目前加成。"
+            en = "Shows clearer Supernova and Baseball Card info.",
+            zh_cn = "显示更清晰的超新星和棒球卡信息。",
+            zh_tw = "顯示更清晰的超新星和棒球卡資訊。"
         }
     },
     {

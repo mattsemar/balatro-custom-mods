@@ -1,6 +1,6 @@
 # Balatro Comfort Pack / 小丑牌舒适包
 
-版本：1.0.0
+版本：1.0.4
 
 Balatro Comfort Pack 是一个整合型 Balatro 辅助模组。它把本仓库里的六个小功能合并到同一个 mod 文件夹里，并提供配置面板，让玩家可以单独开关每个功能。
 
@@ -16,8 +16,8 @@ Balatro Comfort Pack 是一个整合型 Balatro 辅助模组。它把本仓库�
 2. Run History / 历史战绩
    记录历史对局、最终小丑牌、最终牌组、优惠券、基础结果、筛选和统计信息。
 
-3. Supernova Tracker / 超新星追踪
-   在超新星小丑牌说明里显示每种牌型当前能提供多少倍率。
+3. More Joker Info / 更多小丑牌信息
+   在小丑牌说明里显示更清晰的超新星牌型加成和棒球卡总倍率。
 
 影响平衡类：
 
@@ -29,6 +29,29 @@ Balatro Comfort Pack 是一个整合型 Balatro 辅助模组。它把本仓库�
 
 6. Step Back / 对局回退
    在盲注内出牌或弃牌前创建检查点，提供历史菜单和牌面预览。
+
+## 更新日志
+
+### 1.0.4
+
+- 内置分数预览模块更新到单独版 1.3.2。
+- 排查同类小丑牌副作用路径后，扩大沙盒恢复范围，补充恢复卡牌移除和溶解动画相关临时标记。
+
+### 1.0.3
+
+- 内置分数预览模块更新到单独版 1.3.1。
+- 修复分数预览沙盒检查单张 6 点牌后，会导致真实出牌时第六感不生效的问题。
+
+### 1.0.2
+
+- 内置小丑牌提示模块更新为 More Joker Info 1.0.3。
+- 超新星提示信息改成更大的黑底高对比两列卡片。
+- 棒球卡说明现在会显示可加成的罕见小丑牌数量，以及当前总 X 倍率。
+
+### 1.0.1
+
+- 内置历史战绩模块更新到单独版 0.1.3。
+- 开始新一局时，会把上一局未正常结束的历史记录结算为 `未完成`，不再一直显示为 `进行中`。
 
 ## 配置面板
 
@@ -71,7 +94,7 @@ UI 文本支持：
 
 1. 安装 Lovely。
 2. 安装 Steamodded / SMODS。
-3. 下载 `BalatroComfortPack-1.0.0.zip`。
+3. 下载 `BalatroComfortPack-1.0.4.zip`。
 4. 解压压缩包。
 5. 将 `BalatroComfortPack` 文件夹放入 Balatro 的 Mods 目录：
 
@@ -90,7 +113,7 @@ UI 文本支持：
 不要多套一层文件夹，例如不要变成：
 
 ```text
-%AppData%\Balatro\Mods\BalatroComfortPack-1.0.0\BalatroComfortPack\manifest.json
+%AppData%\Balatro\Mods\BalatroComfortPack-1.0.4\BalatroComfortPack\manifest.json
 ```
 
 ## 安全说明

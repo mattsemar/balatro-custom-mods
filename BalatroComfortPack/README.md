@@ -1,6 +1,6 @@
 # Balatro Comfort Pack
 
-Version: 1.0.0
+Version: 1.0.4
 
 Balatro Comfort Pack is an all-in-one helper pack for Balatro. It combines six small mods from this repository into one mod folder, with a config panel that lets you turn each feature on or off.
 
@@ -16,8 +16,8 @@ Quality-of-life helpers:
 2. Run History / 历史战绩
    Records past runs, final Jokers, final deck, vouchers, basic results, filters, and statistics.
 
-3. Supernova Tracker / 超新星追踪
-   Adds Supernova's current per-hand Mult bonuses to the Joker tooltip.
+3. More Joker Info / 更多小丑牌信息
+   Adds clearer Supernova hand bonuses and Baseball Card total X Mult to Joker tooltips.
 
 Balance-affecting helpers:
 
@@ -29,6 +29,29 @@ Balance-affecting helpers:
 
 6. Step Back / 对局回退
    Adds in-blind checkpoints before plays and discards, with a history menu and card previews.
+
+## Changelog
+
+### 1.0.4
+
+- Updated the built-in Score Preview module to standalone 1.3.2.
+- Expanded sandbox restoration for similar Joker side-effect paths involving card removal and dissolve flags.
+
+### 1.0.3
+
+- Updated the built-in Score Preview module to standalone 1.3.1.
+- Fixed Sixth Sense being blocked after the score preview sandbox inspected a single played 6.
+
+### 1.0.2
+
+- Updated the built-in Joker tooltip module to More Joker Info 1.0.3.
+- Supernova tooltip info now uses larger high-contrast two-column cards.
+- Baseball Card now shows eligible Uncommon Jokers and current total X Mult in its tooltip.
+
+### 1.0.1
+
+- Updated the built-in Run History module to standalone 0.1.3.
+- Starting a new run now closes any previous unfinished run-history record as `Unfinished` instead of leaving it stuck as `In Progress`.
 
 ## Config Panel
 
@@ -71,7 +94,7 @@ The mod chooses text based on Balatro's current language setting.
 
 1. Install Lovely.
 2. Install Steamodded / SMODS.
-3. Download `BalatroComfortPack-1.0.0.zip`.
+3. Download `BalatroComfortPack-1.0.4.zip`.
 4. Extract the zip.
 5. Move the `BalatroComfortPack` folder into your Balatro Mods directory:
 
@@ -90,14 +113,14 @@ The final layout should look like this:
 Do not place the mod inside an extra nested folder such as:
 
 ```text
-%AppData%\Balatro\Mods\BalatroComfortPack-1.0.0\BalatroComfortPack\manifest.json
+%AppData%\Balatro\Mods\BalatroComfortPack-1.0.4\BalatroComfortPack\manifest.json
 ```
 
 ## Safety Notes
 
 - The mod does not edit Balatro's installed game files.
 - The mod stores its own settings through Steamodded's normal mod config system.
-- Run History stores run records in their own `run_archive.jkr` file under the profile folder (not in `profile.jkr`), keeping up to 50 runs by default with a file-size safeguard to avoid unlimited growth.
+- Run History stores run records in Balatro profile/settings data and caps the record list to avoid unlimited growth.
 - Score Preview is a sandboxed estimate. It is meant as a reference, not a guaranteed replacement for the real scoring animation.
 - Step Back and Shop Undo restore checkpoints through Balatro's run save/load data shape. Mods that keep unsaved external state may not restore perfectly.
 

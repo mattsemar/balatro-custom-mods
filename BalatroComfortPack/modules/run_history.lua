@@ -15,13 +15,8 @@ RunArchive.final_pages = RunArchive.final_pages or {}
 
 local ARCHIVE_KEY = "balatro_run_archive"
 local CURRENT_KEY = "balatro_run_archive_current"
-local ARCHIVE_FILE = "run_archive.jkr"
 local ARCHIVE_VERSION = 1
-local DEFAULT_MAX_RUNS = 50
--- Safety ceiling on the serialized (uncompressed) archive. A single Lua chunk cannot
--- exceed LuaJIT's hard limit of 65,536 constants, so we keep the file well under that
--- even if the run-count cap is raised or individual runs are unusually heavy.
-local MAX_ARCHIVE_BYTES = 5 * 1024 * 1024
+local MAX_RUNS = 500
 local MAX_EVENTS = 80
 local MAX_HANDS = 100
 local MAX_FINAL_CARDS = 140
@@ -457,115 +452,31 @@ local function plain_copy(value, depth)
     return out
 end
 
-local current_mod = SMODS and SMODS.current_mod or nil
-
 local function profile()
     if not G or not G.PROFILES or not G.SETTINGS or not G.SETTINGS.profile then return nil end
     return G.PROFILES[G.SETTINGS.profile]
 end
 
--- Cap on archived runs. Config-driven (mod config key `run_history_max_runs`), with a
--- sensible default. The ring buffer keeps the newest runs and drops the oldest.
-local function max_runs()
-    local cfg = current_mod and type(current_mod.config) == "table" and current_mod.config or nil
-    local value = cfg and tonumber(cfg.run_history_max_runs) or nil
-    if value and value >= 1 then return math.floor(value) end
-    return DEFAULT_MAX_RUNS
-end
-
--- The archive lives in its own file (ARCHIVE_FILE) under the profile directory, NOT in
--- profile.jkr. It is loaded lazily on first access and cached for the session, so the
--- profile chunk the game compiles at launch never carries the archive.
-local archive_state = nil
-local archive_loaded = false
-
-local function archive_file_path()
-    if not G or not G.SETTINGS or G.SETTINGS.profile == nil then return nil end
-    return tostring(G.SETTINGS.profile) .. "/" .. ARCHIVE_FILE
-end
-
-local function empty_archive()
-    return { version = ARCHIVE_VERSION, next_id = 1, runs = {} }
-end
-
-local function normalize_archive(a)
-    if type(a) ~= "table" then return empty_archive() end
-    a.version = ARCHIVE_VERSION
-    a.next_id = tonumber(a.next_id) or 1
-    if type(a.runs) ~= "table" then a.runs = {} end
-    return a
-end
-
-local function trim_to_cap(a)
-    local cap = max_runs()
-    while #a.runs > cap do
-        table.remove(a.runs)
+local function archive()
+    local p = profile()
+    if not p then return nil end
+    if type(p[ARCHIVE_KEY]) ~= "table" then
+        p[ARCHIVE_KEY] = {
+            version = ARCHIVE_VERSION,
+            next_id = 1,
+            runs = {}
+        }
     end
-end
-
-local function load_archive_file()
-    local path = archive_file_path()
-    if not path or type(get_compressed) ~= "function" or type(STR_UNPACK) ~= "function" then return nil end
-    local ok, contents = pcall(get_compressed, path)
-    if not ok or type(contents) ~= "string" or contents == "" then return nil end
-    local parsed_ok, parsed = pcall(STR_UNPACK, contents)
-    if not parsed_ok or type(parsed) ~= "table" then return nil end
-    return normalize_archive(parsed)
+    p[ARCHIVE_KEY].version = ARCHIVE_VERSION
+    p[ARCHIVE_KEY].next_id = p[ARCHIVE_KEY].next_id or 1
+    p[ARCHIVE_KEY].runs = p[ARCHIVE_KEY].runs or {}
+    return p[ARCHIVE_KEY]
 end
 
 local function save_archive()
-    if not archive_loaded or type(archive_state) ~= "table" then return end
-    local path = archive_file_path()
-    if not path or type(compress_and_save) ~= "function" then return end
-    trim_to_cap(archive_state)
-    -- Never let the serialized archive approach the LuaJIT constant limit. Drop the
-    -- oldest runs until the packed size is safe, independent of the run-count cap.
-    if type(STR_PACK) == "function" then
-        while #archive_state.runs > 1 do
-            local ok, packed = pcall(STR_PACK, archive_state)
-            if not ok or type(packed) ~= "string" or #packed <= MAX_ARCHIVE_BYTES then break end
-            table.remove(archive_state.runs)
-        end
-    end
-    pcall(compress_and_save, path, archive_state)
-end
-
--- One-time migration. Older versions stored the archive inside profile.jkr under
--- ARCHIVE_KEY, which could push the profile chunk past the LuaJIT constant limit and
--- crash the game on launch. Move any such data into ARCHIVE_FILE (truncated to the cap)
--- and delete the key from the profile so loadable-but-bloated saves get healed. This
--- runs entirely on in-memory tables, so it cannot itself trigger the constant crash.
-local function migrate_from_profile()
-    local p = profile()
-    if not p or type(p[ARCHIVE_KEY]) ~= "table" then return false end
-
-    local legacy = p[ARCHIVE_KEY]
-    if #archive_state.runs == 0 then
-        archive_state.next_id = tonumber(legacy.next_id) or archive_state.next_id or 1
-        archive_state.runs = {}
-        if type(legacy.runs) == "table" then
-            for _, run in ipairs(legacy.runs) do
-                archive_state.runs[#archive_state.runs + 1] = run
-            end
-        end
-        trim_to_cap(archive_state)
-    end
-
-    p[ARCHIVE_KEY] = nil
     if G and type(G.save_settings) == "function" then
-        pcall(function() G:save_settings() end)
+        G:save_settings()
     end
-    return true
-end
-
-local function archive()
-    if archive_loaded then return archive_state end
-    archive_state = load_archive_file() or empty_archive()
-    archive_loaded = true
-    if migrate_from_profile() then
-        save_archive()
-    end
-    return archive_state
 end
 
 local function localized_name(key, set, fallback)
@@ -747,6 +658,19 @@ local function current_run_record()
     return current
 end
 
+local function saved_current_run_record()
+    if not G or not G.SAVED_GAME or not G.SAVED_GAME.GAME then return nil end
+    local current = G.SAVED_GAME.GAME[CURRENT_KEY]
+    if type(current) ~= "table" then return nil end
+    return current
+end
+
+local function run_is_in_progress(run)
+    return type(run) == "table" and (run.result == "in_progress" or run.status == "in_progress")
+end
+
+local snapshot_final_state
+
 local function upsert_run(run, should_save)
     if type(run) ~= "table" or not run.id then return end
     local a = archive()
@@ -762,8 +686,71 @@ local function upsert_run(run, should_save)
     end
 
     table.insert(a.runs, 1, copy)
-    trim_to_cap(a)
+    while #a.runs > MAX_RUNS do
+        table.remove(a.runs)
+    end
     if should_save then save_archive() end
+end
+
+local function mark_run_abandoned(run, should_save)
+    if type(run) ~= "table" or not run.id or not run_is_in_progress(run) then return false end
+
+    local live_current = current_run_record()
+    if live_current and tostring(live_current.id) == tostring(run.id) then
+        snapshot_final_state(run)
+    end
+
+    run.result = "abandoned"
+    run.status = "finished"
+    run.finished_at = run.finished_at or now_text()
+    run.updated_at = now_text()
+
+    if G and G.GAME and type(G.GAME[CURRENT_KEY]) == "table" and tostring(G.GAME[CURRENT_KEY].id) == tostring(run.id) then
+        G.GAME[CURRENT_KEY] = run
+    end
+    if G and G.SAVED_GAME and G.SAVED_GAME.GAME and type(G.SAVED_GAME.GAME[CURRENT_KEY]) == "table"
+        and tostring(G.SAVED_GAME.GAME[CURRENT_KEY].id) == tostring(run.id) then
+        G.SAVED_GAME.GAME[CURRENT_KEY] = plain_copy(run)
+    end
+
+    upsert_run(run, should_save)
+    return true
+end
+
+local function abandon_active_unfinished_run()
+    local changed = false
+    local current = current_run_record()
+    if current then
+        changed = mark_run_abandoned(current, false) or changed
+    end
+
+    local saved = saved_current_run_record()
+    if saved and (not current or tostring(saved.id) ~= tostring(current.id)) then
+        changed = mark_run_abandoned(saved, false) or changed
+    end
+
+    if changed then save_archive() end
+    return changed
+end
+
+local function cleanup_stale_in_progress_runs()
+    local a = archive()
+    if not a or type(a.runs) ~= "table" then return end
+
+    local active_ids = {}
+    local current = current_run_record()
+    if current and current.id then active_ids[tostring(current.id)] = true end
+    local saved = saved_current_run_record()
+    if saved and saved.id then active_ids[tostring(saved.id)] = true end
+
+    local changed = false
+    for _, run in ipairs(a.runs) do
+        if run_is_in_progress(run) and not active_ids[tostring(run.id)] then
+            changed = mark_run_abandoned(run, false) or changed
+        end
+    end
+
+    if changed then save_archive() end
 end
 
 local function create_new_run_record()
@@ -816,9 +803,23 @@ local function ensure_current_run()
 end
 
 local function sync_saved_current_to_profile()
-    if G and G.SAVED_GAME and G.SAVED_GAME.GAME and type(G.SAVED_GAME.GAME[CURRENT_KEY]) == "table" then
-        upsert_run(G.SAVED_GAME.GAME[CURRENT_KEY], false)
+    local saved = saved_current_run_record()
+    if saved then
+        local existing = nil
+        local a = archive()
+        if a and type(a.runs) == "table" then
+            for _, run in ipairs(a.runs) do
+                if tostring(run.id) == tostring(saved.id) then
+                    existing = run
+                    break
+                end
+            end
+        end
+        if not existing or run_is_in_progress(existing) then
+            upsert_run(saved, false)
+        end
     end
+    cleanup_stale_in_progress_runs()
 end
 
 local function trim_list(list, max)
@@ -887,7 +888,7 @@ local function append_hand(kind)
     current.updated_at = now_text()
 end
 
-local function snapshot_final_state(current)
+function snapshot_final_state(current)
     if not current or not G or not G.GAME then return end
     local blind_key, blind_name, blind_fallback = blind_data()
 
@@ -1435,7 +1436,7 @@ local function two_line_cell(primary, secondary, minw, scale, primary_colour, se
     }}
 end
 
-local result_filter_order = { "all", "win", "loss", "endless_loss", "in_progress" }
+local result_filter_order = { "all", "win", "loss", "endless_loss", "abandoned", "in_progress" }
 local sort_order = { "newest", "oldest", "best_score", "farthest_ante" }
 
 local function filter_result_label(value)
@@ -1973,12 +1974,16 @@ end
 local original_game_start_run = Game and Game.start_run
 if original_game_start_run then
     function Game:start_run(args)
+        local is_saved_continue = args and args.savetext
+        if not is_saved_continue then
+            abandon_active_unfinished_run()
+        end
         local result = original_game_start_run(self, args)
         if G and G.GAME then
-            if args and args.savetext and type(G.GAME[CURRENT_KEY]) == "table" then
+            if is_saved_continue and type(G.GAME[CURRENT_KEY]) == "table" then
                 RunArchive.current = G.GAME[CURRENT_KEY]
                 upsert_run(RunArchive.current, true)
-            elseif not args or not args.savetext then
+            elseif not is_saved_continue then
                 create_new_run_record()
             elseif not G.GAME[CURRENT_KEY] then
                 create_new_run_record()

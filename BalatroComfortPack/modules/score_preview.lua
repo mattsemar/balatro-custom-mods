@@ -395,6 +395,11 @@ local function capture_state()
             shattered = card.shattered,
             getting_sliced = card.getting_sliced,
             vampired = card.vampired,
+            sixth_sense = card.sixth_sense,
+            removed = card.removed,
+            dissolve = card.dissolve,
+            dissolve_colours = deep_copy(card.dissolve_colours),
+            skip_destroy_animation = card.skip_destroy_animation,
             front_hidden = card.front_hidden,
             lucky_trigger = card.lucky_trigger,
             repetition_trigger = card.repetition_trigger,
@@ -450,6 +455,11 @@ local function restore_state(snapshot)
             card.shattered = state.shattered
             card.getting_sliced = state.getting_sliced
             card.vampired = state.vampired
+            card.sixth_sense = state.sixth_sense
+            card.removed = state.removed
+            card.dissolve = state.dissolve
+            card.dissolve_colours = deep_copy(state.dissolve_colours)
+            card.skip_destroy_animation = state.skip_destroy_animation
             card.front_hidden = state.front_hidden
             card.lucky_trigger = state.lucky_trigger
             card.repetition_trigger = state.repetition_trigger
