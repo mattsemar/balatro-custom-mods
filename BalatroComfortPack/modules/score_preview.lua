@@ -21,6 +21,12 @@ local function ev_samples()
     return 40
 end
 
+-- Shop joker-swap impact (raw Δ% of the last hand played). Opt-in.
+local function show_swap()
+    local cfg = mod_config()
+    return cfg ~= nil and cfg.score_preview_swap == true
+end
+
 local function language_key()
     local lang = G and G.SETTINGS and (G.SETTINGS.real_language or G.SETTINGS.language) or nil
     return type(lang) == "string" and lang:lower() or ""
@@ -1213,10 +1219,113 @@ local function apply_result(result)
     ScorePreview.ui.exchange = exchange_rate_text(result.chips, result.mult)
 end
 
+-- ---------------------------------------------------------------------------
+-- Shop joker-swap impact. When hovering a shop joker, re-simulate the last hand
+-- played with that joker added (or swapped in for the rightmost if slots are
+-- full) and report the raw Δ% versus your current jokers. Opt-in; guarded so any
+-- wrong assumption degrades to no readout rather than a crash.
+-- ---------------------------------------------------------------------------
+
+local swap_cache = { key = nil, text = "" }
+
+local function joker_limit()
+    return (G and G.jokers and G.jokers.config and tonumber(G.jokers.config.card_limit)) or 5
+end
+
+local function is_shop_joker(card)
+    return card and G and G.shop_jokers and card.area == G.shop_jokers
+        and card.ability and card.ability.set == "Joker"
+end
+
+local function last_play_cards()
+    local lp = ScorePreview.last_play
+    if not lp or type(lp.cards) ~= "table" then return nil end
+    local cards = {}
+    for _, c in ipairs(lp.cards) do
+        if type(c) == "table" and not c.removed and c.ability then cards[#cards + 1] = c end
+    end
+    return (#cards > 0) and cards or nil
+end
+
+local function score_hand_with_jokers(joker_list, snapshot, selected)
+    restore_state(snapshot)
+    G.jokers.cards = joker_list
+    for _, c in ipairs(joker_list) do c.area = G.jokers; c.parent = G.jokers end
+    local ok, result = with_sandbox(function()
+        return run_true_scoring(selected)
+    end, false)
+    return ok and result and tonumber(result.total) or nil
+end
+
+local function compute_swap_delta(candidate)
+    local selected = last_play_cards()
+    if not selected then return nil end
+    if not G or not G.jokers or type(G.jokers.cards) ~= "table" then return nil end
+
+    local current = shallow_copy_array(G.jokers.cards)
+    local swapped = shallow_copy_array(current)
+    if #swapped >= joker_limit() and #swapped > 0 then
+        table.remove(swapped)      -- drop the rightmost joker
+    end
+    swapped[#swapped + 1] = candidate
+
+    -- The candidate lives in G.shop_jokers, which is not part of the snapshot, so
+    -- preserve and restore its home area around the simulation.
+    local cand_area, cand_parent = candidate.area, candidate.parent
+
+    local snapshot = capture_state()
+    local base = score_hand_with_jokers(current, snapshot, selected)
+    local with = score_hand_with_jokers(swapped, snapshot, selected)
+    restore_state(snapshot)
+
+    candidate.area, candidate.parent = cand_area, cand_parent
+
+    if not base or not with or base <= 0 then return nil end
+    return ((with - base) / base) * 100
+end
+
+local function swap_signature(candidate)
+    local parts = { tostring(candidate) }
+    if G and G.jokers and G.jokers.cards then
+        for _, c in ipairs(G.jokers.cards) do parts[#parts + 1] = tostring(c) end
+    end
+    local lp = ScorePreview.last_play
+    parts[#parts + 1] = lp and tostring(lp.stamp) or "-"
+    return table.concat(parts, "|")
+end
+
+local function swap_delta_text(pct)
+    local body = (pct >= 0 and "+" or "") .. string.format("%.0f", pct) .. "%"
+    local lang = language_group()
+    if lang == "zh_cn" then return "换牌 Δ " .. body end
+    if lang == "zh_tw" then return "換牌 Δ " .. body end
+    return "Swap Δ " .. body
+end
+
+-- Returns true if it produced a shop-swap readout (so update() should stop).
+local function update_swap_readout()
+    if not show_swap() then return false end
+    if not (G and G.STATE and G.STATES and G.STATE == G.STATES.SHOP) then return false end
+    if not is_shop_joker(ScorePreview.hovered) then return false end
+
+    local candidate = ScorePreview.hovered
+    local sig = swap_signature(candidate)
+    if swap_cache.key ~= sig then
+        swap_cache.key = sig
+        local ok, pct = pcall(compute_swap_delta, candidate)
+        swap_cache.text = (ok and type(pct) == "number") and swap_delta_text(pct) or ""
+    end
+    if swap_cache.text == "" then return false end
+    ScorePreview.ui.line = swap_cache.text
+    ScorePreview.ui.target_reached = false
+    return true
+end
+
 function ScorePreview.update()
     if not G or not G.GAME or not G.STATES or G.STATE ~= G.STATES.SELECTING_HAND then
         ScorePreview.cache.signature = nil
         ScorePreview.cache.result = nil
+        if update_swap_readout() then return end
         set_idle()
         return
     end
@@ -1310,4 +1419,34 @@ function create_UIBox_HUD()
 
     rows[#rows + 1] = ScorePreview.preview_ui()
     return ui
+end
+
+-- Record the cards of each real hand played so the shop swap readout can re-simulate
+-- the last hand. Preview sandboxing never routes through evaluate_play, so this only
+-- fires on genuine plays.
+if G and G.FUNCS and type(G.FUNCS.evaluate_play) == "function" then
+    local evaluate_play_ref = G.FUNCS.evaluate_play
+    G.FUNCS.evaluate_play = function(e)
+        if G and G.play and type(G.play.cards) == "table" and #G.play.cards > 0 then
+            local cards = {}
+            for _, c in ipairs(G.play.cards) do cards[#cards + 1] = c end
+            ScorePreview.play_counter = (ScorePreview.play_counter or 0) + 1
+            ScorePreview.last_play = { cards = cards, stamp = ScorePreview.play_counter }
+        end
+        return evaluate_play_ref(e)
+    end
+end
+
+-- Track the hovered card so the shop readout knows which joker to evaluate.
+if Card and type(Card.hover) == "function" and type(Card.stop_hover) == "function" then
+    local card_hover_ref = Card.hover
+    function Card:hover()
+        ScorePreview.hovered = self
+        return card_hover_ref(self)
+    end
+    local card_stop_hover_ref = Card.stop_hover
+    function Card:stop_hover()
+        if ScorePreview.hovered == self then ScorePreview.hovered = nil end
+        return card_stop_hover_ref(self)
+    end
 end

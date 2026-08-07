@@ -4,6 +4,7 @@ return {
     supernova_tracker = true,
     score_preview = true,
     score_preview_ev = true,
+    score_preview_swap = true,
     shop_undo = false,
     step_back = false
 }
