@@ -74,9 +74,9 @@ local function exchange_rate_text(chips, mult)
     local per = chips / mult
     local n = per >= 10 and fmt_number(math.floor(per + 0.5)) or tostring(math.floor(per * 10 + 0.5) / 10)
     local lang = language_group()
-    if lang == "zh_cn" then return "1 倍率 ≈ " .. n .. " 筹码" end
-    if lang == "zh_tw" then return "1 倍率 ≈ " .. n .. " 籌碼" end
-    return "1 Mult ≈ " .. n .. " Chips"
+    if lang == "zh_cn" then return "1 倍率 ~ " .. n .. " 筹码" end
+    if lang == "zh_tw" then return "1 倍率 ~ " .. n .. " 籌碼" end
+    return "1 Mult ~ " .. n .. " Chips"
 end
 
 local function safe_number(value, fallback)
