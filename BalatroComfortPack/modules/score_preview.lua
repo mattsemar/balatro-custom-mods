@@ -628,10 +628,15 @@ local function with_sandbox(fn, allow_prob)
     end
     if SMODS then
         SMODS.no_resolve = true
-        -- Floor mode forces probabilistic effects off; EV sampling lets them roll.
-        -- The stub also records whether any probability gate was consulted, so the
-        -- EV path can skip sampling entirely on hands with no randomness.
-        if not allow_prob then
+        -- allow_prob:
+        --   falsy   -> force all gates false (the floor); also records ev_probe.seen
+        --   "max"   -> force all gates true (the ceiling, used to test score impact)
+        --   true    -> leave the real probability function in place (EV sampling)
+        if allow_prob == "max" then
+            SMODS.pseudorandom_probability = function()
+                return true
+            end
+        elseif not allow_prob then
             SMODS.pseudorandom_probability = function()
                 ev_probe.seen = true
                 return false
@@ -1119,6 +1124,19 @@ local function sample_scoring(selected, snapshot, n)
     -- No randomness in this hand -> no sampling. This is the common case and keeps
     -- ordinary selections at a single scoring pass (no UI lag).
     if not ev_probe.seen then
+        restore_state(snapshot)
+        return floor, {}
+    end
+
+    -- A gate fired, but does it change THIS hand's score? Compare the floor (all
+    -- gates false) with a ceiling pass (all gates true). If equal, the randomness is
+    -- score-irrelevant here -- e.g. a Glass card's break chance, which only destroys
+    -- the card after scoring -- so sampling would just reproduce the floor N times.
+    restore_state(snapshot)
+    local cok, ceil = with_sandbox(function()
+        return run_true_scoring(selected)
+    end, "max")
+    if cok and ceil and ceil.total == floor.total then
         restore_state(snapshot)
         return floor, {}
     end
