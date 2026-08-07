@@ -48,9 +48,11 @@ end
 
 ScorePreview.ui = ScorePreview.ui or {
     line = preview_idle_text(),
+    exchange = "",
     target_reached = false
 }
 ScorePreview.ui.line = ScorePreview.ui.line or preview_idle_text()
+ScorePreview.ui.exchange = ScorePreview.ui.exchange or ""
 ScorePreview.ui.target_reached = ScorePreview.ui.target_reached or false
 ScorePreview.cache = ScorePreview.cache or { signature = nil, result = nil }
 
@@ -61,6 +63,20 @@ local function fmt_number(value)
         if ok and formatted then return formatted end
     end
     return tostring(math.floor(value + 0.0000001))
+end
+
+-- "1 Mult ≈ N Chips": how many chips one point of Mult is worth at the current score.
+-- Since Score = Chips × Mult, a mult point is worth Chips / Mult chip points.
+local function exchange_rate_text(chips, mult)
+    chips = tonumber(chips)
+    mult = tonumber(mult)
+    if not chips or not mult or mult <= 0 then return "" end
+    local per = chips / mult
+    local n = per >= 10 and fmt_number(math.floor(per + 0.5)) or tostring(math.floor(per * 10 + 0.5) / 10)
+    local lang = language_group()
+    if lang == "zh_cn" then return "1 倍率 ≈ " .. n .. " 筹码" end
+    if lang == "zh_tw" then return "1 倍率 ≈ " .. n .. " 籌碼" end
+    return "1 Mult ≈ " .. n .. " Chips"
 end
 
 local function safe_number(value, fallback)
@@ -1068,11 +1084,13 @@ end
 
 local function set_idle()
     ScorePreview.ui.line = preview_idle_text()
+    ScorePreview.ui.exchange = ""
     ScorePreview.ui.target_reached = false
 end
 
 local function set_unavailable(reason)
     ScorePreview.ui.line = preview_idle_text()
+    ScorePreview.ui.exchange = ""
     ScorePreview.ui.target_reached = false
 end
 
@@ -1096,6 +1114,7 @@ local function apply_result(result)
 
     if result.mode == "hidden" then
         ScorePreview.ui.line = preview_unknown_text()
+        ScorePreview.ui.exchange = ""
         ScorePreview.ui.target_reached = false
         return
     end
@@ -1103,6 +1122,7 @@ local function apply_result(result)
     ScorePreview.ui.target_reached = result_reaches_blind(result)
     ScorePreview.ui.line = preview_prefix() .. fmt_number(result.total)
         .. (ScorePreview.ui.target_reached and preview_enough_text() or "")
+    ScorePreview.ui.exchange = exchange_rate_text(result.chips, result.mult)
 end
 
 function ScorePreview.update()
@@ -1170,6 +1190,13 @@ function ScorePreview.preview_ui()
                 config = { align = "cm", padding = 0.01, maxw = 4.4 },
                 nodes = {
                     { n = G.UIT.T, config = { ref_table = ScorePreview.ui, ref_value = "line", scale = scale, colour = G.C.MONEY, shadow = true } }
+                }
+            },
+            {
+                n = G.UIT.R,
+                config = { align = "cm", padding = 0.01, maxw = 4.4 },
+                nodes = {
+                    { n = G.UIT.T, config = { ref_table = ScorePreview.ui, ref_value = "exchange", scale = scale * 0.72, colour = G.C.UI.TEXT_LIGHT, shadow = true } }
                 }
             }
         }
