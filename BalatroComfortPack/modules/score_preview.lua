@@ -27,6 +27,12 @@ local function show_swap()
     return cfg ~= nil and cfg.score_preview_swap == true
 end
 
+-- Post-hand per-joker breakdown (leave-one-out Δ% of the hand just played). Opt-in.
+local function show_breakdown()
+    local cfg = mod_config()
+    return cfg ~= nil and cfg.score_preview_breakdown == true
+end
+
 local function language_key()
     local lang = G and G.SETTINGS and (G.SETTINGS.real_language or G.SETTINGS.language) or nil
     return type(lang) == "string" and lang:lower() or ""
@@ -79,6 +85,7 @@ ScorePreview.ui = ScorePreview.ui or {
 }
 ScorePreview.ui.line = ScorePreview.ui.line or preview_idle_text()
 ScorePreview.ui.exchange = ScorePreview.ui.exchange or ""
+ScorePreview.ui.breakdown = ScorePreview.ui.breakdown or ""
 ScorePreview.ui.target_reached = ScorePreview.ui.target_reached or false
 ScorePreview.cache = ScorePreview.cache or { signature = nil, result = nil }
 
@@ -1299,6 +1306,56 @@ local function score_hand_with_jokers(joker_list, snapshot, selected)
     return ok and result and tonumber(result.total) or nil
 end
 
+local function joker_name(card)
+    if not card or not card.ability then return "Joker" end
+    if type(localize) == "function" and card.config and card.config.center_key then
+        local ok, r = pcall(localize, { type = "name_text", key = card.config.center_key, set = "Joker" })
+        if ok then
+            if type(r) == "string" and r ~= "" and r ~= "ERROR" then return r end
+            if type(r) == "table" and type(r[1]) == "string" and r[1] ~= "" then return r[1] end
+        end
+    end
+    return tostring(card.ability.name or "Joker")
+end
+
+-- Leave-one-out breakdown of a played hand: each joker's Δ% is how much score is lost
+-- if that one joker is removed (the rest kept). Impacts intentionally overlap and do not
+-- sum -- synergy (e.g. two ×Mult) credits both. Runs entirely on the snapshot/restore, so
+-- the real play is untouched even if it errors part way.
+local function compute_breakdown(selected)
+    if type(selected) ~= "table" or #selected == 0 then return "" end
+    if not G or not G.jokers or type(G.jokers.cards) ~= "table" or #G.jokers.cards == 0 then return "" end
+
+    local jokers = shallow_copy_array(G.jokers.cards)
+    local snapshot = capture_state()
+
+    local ok, rows = pcall(function()
+        local full = score_hand_with_jokers(shallow_copy_array(jokers), snapshot, selected)
+        if not full or full <= 0 then return nil end
+        local out = {}
+        for i = 1, #jokers do
+            local without = {}
+            for k, c in ipairs(jokers) do if k ~= i then without[#without + 1] = c end end
+            local s = score_hand_with_jokers(without, snapshot, selected)
+            if s then
+                out[#out + 1] = { name = joker_name(jokers[i]), pct = ((full - s) / full) * 100 }
+            end
+        end
+        return out
+    end)
+
+    restore_state(snapshot)
+    if not ok or type(rows) ~= "table" or #rows == 0 then return "" end
+
+    table.sort(rows, function(a, b) return a.pct > b.pct end)
+    local parts = {}
+    for i = 1, math.min(#rows, 5) do
+        local r = rows[i]
+        parts[#parts + 1] = r.name .. " " .. (r.pct >= 0 and "+" or "") .. string.format("%.0f", r.pct) .. "%"
+    end
+    return table.concat(parts, " · ")
+end
+
 local function compute_swap_delta(candidate)
     local selected = last_play_cards()
     if not selected then return nil end
@@ -1438,6 +1495,13 @@ function ScorePreview.preview_ui()
                 nodes = {
                     { n = G.UIT.T, config = { ref_table = ScorePreview.ui, ref_value = "exchange", scale = scale * 0.72, colour = G.C.UI.TEXT_LIGHT, shadow = true } }
                 }
+            },
+            {
+                n = G.UIT.R,
+                config = { align = "cm", padding = 0.01, maxw = 4.6 },
+                nodes = {
+                    { n = G.UIT.T, config = { ref_table = ScorePreview.ui, ref_value = "breakdown", scale = scale * 0.6, colour = G.C.BLUE, shadow = true } }
+                }
             }
         }
     }
@@ -1475,6 +1539,13 @@ if G and G.FUNCS and type(G.FUNCS.evaluate_play) == "function" then
             for _, c in ipairs(G.play.cards) do cards[#cards + 1] = c end
             ScorePreview.play_counter = (ScorePreview.play_counter or 0) + 1
             ScorePreview.last_play = { cards = cards, stamp = ScorePreview.play_counter }
+            -- Per-joker breakdown, computed before the real scoring so jokers are still
+            -- in their pre-hand state. Fully guarded: on any failure the real play is
+            -- unaffected and the line is just cleared.
+            if show_breakdown() then
+                local ok, text = pcall(compute_breakdown, cards)
+                ScorePreview.ui.breakdown = (ok and type(text) == "string") and text or ""
+            end
         end
         return evaluate_play_ref(e)
     end
