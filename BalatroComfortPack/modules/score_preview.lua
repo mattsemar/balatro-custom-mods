@@ -1325,6 +1325,19 @@ local function joker_name(card)
     return tostring(card.ability.name or "Joker")
 end
 
+-- Format a breakdown as a compact, sorted, top-5 HUD line with a mode label
+-- ("Drop: " = leave-one-out drop-cost, "Fair: " = Shapley fair share).
+local function format_breakdown_rows(rows, label)
+    if type(rows) ~= "table" or #rows == 0 then return "" end
+    table.sort(rows, function(a, b) return a.pct > b.pct end)
+    local parts = {}
+    for i = 1, math.min(#rows, 5) do
+        local r = rows[i]
+        parts[#parts + 1] = r.name .. " " .. (r.pct >= 0 and "+" or "") .. string.format("%.0f", r.pct) .. "%"
+    end
+    return (label or "") .. table.concat(parts, " · ")
+end
+
 -- Leave-one-out breakdown of a played hand: each joker's Δ% is how much score is lost
 -- if that one joker is removed (the rest kept). Impacts intentionally overlap and do not
 -- sum -- synergy (e.g. two ×Mult) credits both. Runs entirely on the snapshot/restore, so
@@ -1353,14 +1366,7 @@ local function compute_breakdown(selected)
 
     restore_state(snapshot)
     if not ok or type(rows) ~= "table" or #rows == 0 then return "" end
-
-    table.sort(rows, function(a, b) return a.pct > b.pct end)
-    local parts = {}
-    for i = 1, math.min(#rows, 5) do
-        local r = rows[i]
-        parts[#parts + 1] = r.name .. " " .. (r.pct >= 0 and "+" or "") .. string.format("%.0f", r.pct) .. "%"
-    end
-    return table.concat(parts, " · ")
+    return format_breakdown_rows(rows, "Drop: ")
 end
 
 -- Beyond this joker count, exact Shapley (2^N scoring passes) gets expensive, so we
@@ -1422,14 +1428,7 @@ local function compute_shapley(selected)
 
     restore_state(snapshot)
     if not ok or type(rows) ~= "table" or #rows == 0 then return nil end
-
-    table.sort(rows, function(a, b) return a.pct > b.pct end)
-    local parts = {}
-    for i = 1, math.min(#rows, 5) do
-        local r = rows[i]
-        parts[#parts + 1] = r.name .. " " .. (r.pct >= 0 and "+" or "") .. string.format("%.0f", r.pct) .. "%"
-    end
-    return table.concat(parts, " · ")
+    return format_breakdown_rows(rows, "Fair: ")
 end
 
 local function compute_swap_delta(candidate)
