@@ -1331,10 +1331,14 @@ local function format_breakdown_rows(rows, label)
     if type(rows) ~= "table" or #rows == 0 then return "" end
     table.sort(rows, function(a, b) return a.pct > b.pct end)
     local parts = {}
-    for i = 1, math.min(#rows, 5) do
-        local r = rows[i]
-        parts[#parts + 1] = r.name .. " " .. (r.pct >= 0 and "+" or "") .. string.format("%.0f", r.pct) .. "%"
+    for _, r in ipairs(rows) do
+        local num = string.format("%.0f", r.pct)
+        if num ~= "0" and num ~= "-0" then      -- omit jokers that round to 0%
+            parts[#parts + 1] = r.name .. " " .. (r.pct >= 0 and "+" or "") .. num .. "%"
+            if #parts >= 5 then break end
+        end
     end
+    if #parts == 0 then return "" end
     return (label or "") .. table.concat(parts, " · ")
 end
 
