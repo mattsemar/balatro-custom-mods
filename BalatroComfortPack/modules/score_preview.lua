@@ -107,16 +107,29 @@ end
 
 -- "1 Mult ≈ N Chips": how many chips one point of Mult is worth at the current score.
 -- Since Score = Chips × Mult, a mult point is worth Chips / Mult chip points.
+local function fmt_ratio(per)
+    if per >= 10 then return fmt_number(math.floor(per + 0.5)) end
+    return tostring(math.floor(per * 10 + 0.5) / 10)
+end
+
 local function exchange_rate_text(chips, mult)
     chips = tonumber(chips)
     mult = tonumber(mult)
-    if not chips or not mult or mult <= 0 then return "" end
-    local per = chips / mult
-    local n = per >= 10 and fmt_number(math.floor(per + 0.5)) or tostring(math.floor(per * 10 + 0.5) / 10)
+    if not chips or not mult or chips <= 0 or mult <= 0 then return "" end
     local lang = language_group()
-    if lang == "zh_cn" then return "1 倍率 ~ " .. n .. " 筹码" end
-    if lang == "zh_tw" then return "1 倍率 ~ " .. n .. " 籌碼" end
-    return "1 Mult ~ " .. n .. " Chips"
+    -- Quote the rate in whichever direction reads >= 1, so an extreme build (a big
+    -- xMult stack) shows "1 Chip ~ 44 Mult" instead of collapsing to "1 Mult ~ 0 Chips".
+    if chips >= mult then
+        local n = fmt_ratio(chips / mult)
+        if lang == "zh_cn" then return "1 倍率 ~ " .. n .. " 筹码" end
+        if lang == "zh_tw" then return "1 倍率 ~ " .. n .. " 籌碼" end
+        return "1 Mult ~ " .. n .. " Chips"
+    else
+        local n = fmt_ratio(mult / chips)
+        if lang == "zh_cn" then return "1 筹码 ~ " .. n .. " 倍率" end
+        if lang == "zh_tw" then return "1 籌碼 ~ " .. n .. " 倍率" end
+        return "1 Chip ~ " .. n .. " Mult"
+    end
 end
 
 local function safe_number(value, fallback)
@@ -1329,12 +1342,17 @@ end
 -- ("Drop: " = leave-one-out drop-cost, "Fair: " = Shapley fair share).
 local function format_breakdown_rows(rows, label)
     if type(rows) ~= "table" or #rows == 0 then return "" end
+    -- Disambiguate duplicate joker names by loadout position (e.g. two Holograms).
+    local seen = {}
+    for _, r in ipairs(rows) do seen[r.name] = (seen[r.name] or 0) + 1 end
     table.sort(rows, function(a, b) return a.pct > b.pct end)
     local parts = {}
     for _, r in ipairs(rows) do
         local num = string.format("%.0f", r.pct)
         if num ~= "0" and num ~= "-0" then      -- omit jokers that round to 0%
-            parts[#parts + 1] = r.name .. " " .. (r.pct >= 0 and "+" or "") .. num .. "%"
+            local name = r.name
+            if r.slot and (seen[name] or 0) > 1 then name = name .. " #" .. r.slot end
+            parts[#parts + 1] = name .. " " .. (r.pct >= 0 and "+" or "") .. num .. "%"
             if #parts >= 5 then break end
         end
     end
@@ -1362,7 +1380,7 @@ local function compute_breakdown(selected)
             for k, c in ipairs(jokers) do if k ~= i then without[#without + 1] = c end end
             local s = score_hand_with_jokers(without, snapshot, selected)
             if s then
-                out[#out + 1] = { name = joker_name(jokers[i]), pct = ((full - s) / full) * 100 }
+                out[#out + 1] = { name = joker_name(jokers[i]), pct = ((full - s) / full) * 100, slot = i }
             end
         end
         return out
@@ -1425,7 +1443,7 @@ local function compute_shapley(selected)
                     phi = phi + weight * (val[mask + bit_i] - val[mask])
                 end
             end
-            out[#out + 1] = { name = joker_name(jokers[i]), pct = (phi / full) * 100 }
+            out[#out + 1] = { name = joker_name(jokers[i]), pct = (phi / full) * 100, slot = i }
         end
         return out
     end)
@@ -1577,9 +1595,9 @@ function ScorePreview.preview_ui()
             },
             {
                 n = G.UIT.R,
-                config = { align = "cm", padding = 0.01, maxw = 4.6 },
+                config = { align = "cm", padding = 0.01, maxw = 5.0 },
                 nodes = {
-                    { n = G.UIT.T, config = { ref_table = ScorePreview.ui, ref_value = "breakdown", scale = scale * 0.6, colour = G.C.BLUE, shadow = true } }
+                    { n = G.UIT.T, config = { ref_table = ScorePreview.ui, ref_value = "breakdown", scale = scale * 0.72, colour = G.C.BLUE, shadow = true } }
                 }
             }
         }
