@@ -40,6 +40,13 @@ local function show_shapley()
     return cfg ~= nil and cfg.score_preview_shapley == true
 end
 
+-- Include the played hand's most recent level as an extra breakdown "player" (Δ of
+-- level L vs L-1). Opt-in; only meaningful with the breakdown on.
+local function show_planet()
+    local cfg = mod_config()
+    return cfg ~= nil and cfg.score_preview_breakdown_planet == true
+end
+
 local function language_key()
     local lang = G and G.SETTINGS and (G.SETTINGS.real_language or G.SETTINGS.language) or nil
     return type(lang) == "string" and lang:lower() or ""
@@ -1316,10 +1323,18 @@ local function last_play_cards()
     return (#cards > 0) and cards or nil
 end
 
-local function score_hand_with_jokers(joker_list, snapshot, selected)
+local function score_hand_with_jokers(joker_list, snapshot, selected, lower)
     restore_state(snapshot)
     G.jokers.cards = joker_list
     for _, c in ipairs(joker_list) do c.area = G.jokers; c.parent = G.jokers end
+    -- Planet-as-player: optionally score the played hand one level lower by dropping
+    -- its base by a single level increment (restored with the rest of the snapshot).
+    if lower and G.GAME and G.GAME.hands and G.GAME.hands[lower.type] then
+        local h = G.GAME.hands[lower.type]
+        h.chips = (tonumber(h.chips) or 0) - lower.l_chips
+        h.mult = (tonumber(h.mult) or 0) - lower.l_mult
+        h.level = (tonumber(h.level) or 1) - 1
+    end
     local ok, result = with_sandbox(function()
         return run_true_scoring(selected)
     end, false)
@@ -1360,15 +1375,39 @@ local function format_breakdown_rows(rows, label)
     return (label or "") .. table.concat(parts, " · ")
 end
 
+-- Info for treating the played hand's most recent level as an extra breakdown "player":
+-- the hand key, its per-level chip/mult increments (so a subset can be scored one level
+-- lower), and a label. Returns nil when disabled, at level 1, or if increments are absent.
+local function last_level_info(selected)
+    if not show_planet() then return nil end
+    if not G or not G.GAME or type(G.GAME.hands) ~= "table" then return nil end
+    if not G.FUNCS or type(G.FUNCS.get_poker_hand_info) ~= "function" then return nil end
+    local ok, hand_key = pcall(G.FUNCS.get_poker_hand_info, selected)
+    if not ok or type(hand_key) ~= "string" then return nil end
+    local h = G.GAME.hands[hand_key]
+    if type(h) ~= "table" or (tonumber(h.level) or 1) < 2 then return nil end
+    local lc, lm = tonumber(h.l_chips), tonumber(h.l_mult)
+    if not lc or not lm then return nil end
+    local label = hand_key
+    if type(localize) == "function" then
+        local lok, r = pcall(localize, hand_key, "poker_hands")
+        if lok and type(r) == "string" and r ~= "" and r ~= "ERROR" then label = r end
+    end
+    return { type = hand_key, l_chips = lc, l_mult = lm, label = label .. " Lv" }
+end
+
 -- Leave-one-out breakdown of a played hand: each joker's Δ% is how much score is lost
 -- if that one joker is removed (the rest kept). Impacts intentionally overlap and do not
--- sum -- synergy (e.g. two ×Mult) credits both. Runs entirely on the snapshot/restore, so
--- the real play is untouched even if it errors part way.
+-- sum -- synergy (e.g. two ×Mult) credits both. The played hand's last level can be added
+-- as an extra player. Runs entirely on the snapshot/restore, untouched real play on error.
 local function compute_breakdown(selected)
     if type(selected) ~= "table" or #selected == 0 then return "" end
-    if not G or not G.jokers or type(G.jokers.cards) ~= "table" or #G.jokers.cards == 0 then return "" end
+    if not G or not G.jokers or type(G.jokers.cards) ~= "table" then return "" end
 
     local jokers = shallow_copy_array(G.jokers.cards)
+    local planet = last_level_info(selected)
+    if #jokers == 0 and not planet then return "" end
+
     local snapshot = capture_state()
 
     local ok, rows = pcall(function()
@@ -1382,6 +1421,10 @@ local function compute_breakdown(selected)
             if s then
                 out[#out + 1] = { name = joker_name(jokers[i]), pct = ((full - s) / full) * 100, slot = i }
             end
+        end
+        if planet then
+            local s = score_hand_with_jokers(jokers, snapshot, selected, planet)   -- one level lower
+            if s then out[#out + 1] = { name = planet.label, pct = ((full - s) / full) * 100 } end
         end
         return out
     end)
@@ -1406,44 +1449,58 @@ local function compute_shapley(selected)
 
     local jokers = shallow_copy_array(G.jokers.cards)
     local n = #jokers
-    if n == 0 then return "" end
-    if n > SHAPLEY_MAX_JOKERS then return nil end
+
+    -- The played hand's last level can join as an extra player. It's the highest-indexed
+    -- player; when it's OUT of a coalition the hand is scored one level lower.
+    local planet = last_level_info(selected)
+    if planet and (n + 1) > SHAPLEY_MAX_JOKERS then planet = nil end   -- keep 2^p passes bounded
+    if n == 0 and not planet then return "" end
+    if n > SHAPLEY_MAX_JOKERS then return nil end                      -- too many jokers -> LOO
+
+    local p = n + (planet and 1 or 0)
 
     -- LuaJIT has no native bitwise ops; use arithmetic on precomputed powers of two.
     local two_pow = { [0] = 1 }
-    for k = 1, n do two_pow[k] = two_pow[k - 1] * 2 end
+    for k = 1, p do two_pow[k] = two_pow[k - 1] * 2 end
     local fact = { [0] = 1 }
-    for k = 1, n do fact[k] = fact[k - 1] * k end
+    for k = 1, p do fact[k] = fact[k - 1] * k end
+    local planet_bit = planet and two_pow[p - 1] or nil
 
     local snapshot = capture_state()
 
     local ok, rows = pcall(function()
-        local total = two_pow[n]
+        local total = two_pow[p]
         local val = {}
         for mask = 0, total - 1 do
             local sub = {}
             for j = 1, n do
                 if math.floor(mask / two_pow[j - 1]) % 2 == 1 then sub[#sub + 1] = jokers[j] end
             end
-            val[mask] = score_hand_with_jokers(sub, snapshot, selected) or 0
+            -- planet OUT of the coalition => score the hand one level lower
+            local lower = (planet and math.floor(mask / planet_bit) % 2 == 0) and planet or nil
+            val[mask] = score_hand_with_jokers(sub, snapshot, selected, lower) or 0
         end
 
         local full = val[total - 1]
         if not full or full <= 0 then return nil end
 
         local out = {}
-        for i = 1, n do
+        for i = 1, p do
             local bit_i = two_pow[i - 1]
             local phi = 0
             for mask = 0, total - 1 do
-                if math.floor(mask / bit_i) % 2 == 0 then      -- subset S without joker i
+                if math.floor(mask / bit_i) % 2 == 0 then      -- subset S without player i
                     local s, m = 0, mask
                     while m > 0 do s = s + (m % 2); m = math.floor(m / 2) end
-                    local weight = (fact[s] * fact[n - s - 1]) / fact[n]
+                    local weight = (fact[s] * fact[p - s - 1]) / fact[p]
                     phi = phi + weight * (val[mask + bit_i] - val[mask])
                 end
             end
-            out[#out + 1] = { name = joker_name(jokers[i]), pct = (phi / full) * 100, slot = i }
+            if i <= n then
+                out[#out + 1] = { name = joker_name(jokers[i]), pct = (phi / full) * 100, slot = i }
+            else
+                out[#out + 1] = { name = planet.label, pct = (phi / full) * 100 }
+            end
         end
         return out
     end)
