@@ -47,6 +47,13 @@ local function show_planet()
     return cfg ~= nil and cfg.score_preview_breakdown_planet == true
 end
 
+-- Post-hand card-modifier breakdown (leave-one-out Δ% of the played cards' editions and
+-- seals, grouped by type). Opt-in and independent of the joker breakdown.
+local function show_card_breakdown()
+    local cfg = mod_config()
+    return cfg ~= nil and cfg.score_preview_card_breakdown == true
+end
+
 local function language_key()
     local lang = G and G.SETTINGS and (G.SETTINGS.real_language or G.SETTINGS.language) or nil
     return type(lang) == "string" and lang:lower() or ""
@@ -101,6 +108,7 @@ ScorePreview.ui.line = ScorePreview.ui.line or preview_idle_text()
 ScorePreview.ui.exchange = ScorePreview.ui.exchange or ""
 ScorePreview.ui.breakdown = ScorePreview.ui.breakdown or ""
 ScorePreview.ui.nextlevel = ScorePreview.ui.nextlevel or ""
+ScorePreview.ui.cardbreakdown = ScorePreview.ui.cardbreakdown or ""
 ScorePreview.ui.target_reached = ScorePreview.ui.target_reached or false
 ScorePreview.cache = ScorePreview.cache or { signature = nil, result = nil }
 
@@ -1549,6 +1557,66 @@ local function next_level_line(selected)
     return "Next " .. info.name .. " Lv ~ " .. sign .. fmt_number(est)
 end
 
+local card_breakdown_labels = {
+    Cards = { en = "Cards: ", zh_cn = "卡牌: ", zh_tw = "卡牌: " },
+    Editions = { en = "Editions", zh_cn = "闪卡", zh_tw = "閃卡" },
+    Seals = { en = "Seals", zh_cn = "蜡封", zh_tw = "蠟封" }
+}
+
+local function card_label(key)
+    local e = card_breakdown_labels[key]
+    if not e then return key end
+    return e[language_group()] or e.en
+end
+
+-- Score the hand with a set of card fields temporarily nil'd (e.g. "edition" or "seal")
+-- across all played cards. These fields aren't part of the snapshot, so we save and
+-- restore them by hand around the pass.
+local function score_without_card_field(selected, snapshot, jokers, field)
+    local saved = {}
+    for _, c in ipairs(selected) do
+        if c[field] ~= nil then saved[#saved + 1] = { c = c, v = c[field] }; c[field] = nil end
+    end
+    local s = score_hand_with_jokers(jokers, snapshot, selected)
+    for _, e in ipairs(saved) do e.c[field] = e.v end
+    return s
+end
+
+-- Leave-one-out breakdown of the played cards' editions and seals, grouped by type.
+-- Enhancements are not covered yet (they live in card.ability, which the snapshot
+-- restores, so they need an after-restore reset rather than a simple field strip).
+local function compute_card_breakdown(selected)
+    if type(selected) ~= "table" or #selected == 0 then return "" end
+    if not G or not G.jokers or type(G.jokers.cards) ~= "table" then return "" end
+
+    local has_edition, has_seal = false, false
+    for _, c in ipairs(selected) do
+        if c.edition then has_edition = true end
+        if c.seal then has_seal = true end
+    end
+    if not has_edition and not has_seal then return "" end
+
+    local jokers = shallow_copy_array(G.jokers.cards)
+    local snapshot = capture_state()
+    local ok, rows = pcall(function()
+        local full = score_hand_with_jokers(jokers, snapshot, selected)
+        if not full or full <= 0 then return nil end
+        local out = {}
+        if has_edition then
+            local s = score_without_card_field(selected, snapshot, jokers, "edition")
+            if s then out[#out + 1] = { name = card_label("Editions"), pct = ((full - s) / full) * 100 } end
+        end
+        if has_seal then
+            local s = score_without_card_field(selected, snapshot, jokers, "seal")
+            if s then out[#out + 1] = { name = card_label("Seals"), pct = ((full - s) / full) * 100 } end
+        end
+        return out
+    end)
+    restore_state(snapshot)
+    if not ok or type(rows) ~= "table" or #rows == 0 then return "" end
+    return format_breakdown_rows(rows, card_label("Cards"))
+end
+
 local function compute_swap_delta(candidate)
     local selected = last_play_cards()
     if not selected then return nil end
@@ -1702,6 +1770,13 @@ function ScorePreview.preview_ui()
                 nodes = {
                     { n = G.UIT.T, config = { ref_table = ScorePreview.ui, ref_value = "nextlevel", scale = scale * 0.72, colour = G.C.MONEY, shadow = true } }
                 }
+            },
+            {
+                n = G.UIT.R,
+                config = { align = "cm", padding = 0.01, maxw = 5.0 },
+                nodes = {
+                    { n = G.UIT.T, config = { ref_table = ScorePreview.ui, ref_value = "cardbreakdown", scale = scale * 0.72, colour = G.C.PURPLE, shadow = true } }
+                }
             }
         }
     }
@@ -1755,6 +1830,10 @@ if G and G.FUNCS and type(G.FUNCS.evaluate_play) == "function" then
                 ScorePreview.ui.breakdown = text
                 local ok3, nl = pcall(next_level_line, cards)
                 ScorePreview.ui.nextlevel = (ok3 and type(nl) == "string") and nl or ""
+            end
+            if show_card_breakdown() then
+                local okc, cb = pcall(compute_card_breakdown, cards)
+                ScorePreview.ui.cardbreakdown = (okc and type(cb) == "string") and cb or ""
             end
         end
         return evaluate_play_ref(e)
