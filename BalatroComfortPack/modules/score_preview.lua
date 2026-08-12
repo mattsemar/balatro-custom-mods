@@ -47,6 +47,13 @@ local function show_planet()
     return cfg ~= nil and cfg.score_preview_breakdown_planet == true
 end
 
+-- Diagnostic: also show the leave-one-out ("Drop:") line beneath the Shapley ("Fair:")
+-- line, both derived from the single Shapley computation. Only applies in Shapley mode.
+local function show_both()
+    local cfg = mod_config()
+    return cfg ~= nil and cfg.score_preview_breakdown_both == true
+end
+
 local function language_key()
     local lang = G and G.SETTINGS and (G.SETTINGS.real_language or G.SETTINGS.language) or nil
     return type(lang) == "string" and lang:lower() or ""
@@ -100,6 +107,7 @@ ScorePreview.ui = ScorePreview.ui or {
 ScorePreview.ui.line = ScorePreview.ui.line or preview_idle_text()
 ScorePreview.ui.exchange = ScorePreview.ui.exchange or ""
 ScorePreview.ui.breakdown = ScorePreview.ui.breakdown or ""
+ScorePreview.ui.breakdown2 = ScorePreview.ui.breakdown2 or ""
 ScorePreview.ui.target_reached = ScorePreview.ui.target_reached or false
 ScorePreview.cache = ScorePreview.cache or { signature = nil, result = nil }
 
@@ -1355,20 +1363,24 @@ end
 
 -- Format a breakdown as a compact, sorted, top-5 HUD line with a mode label
 -- ("Drop: " = leave-one-out drop-cost, "Fair: " = Shapley fair share).
-local function format_breakdown_rows(rows, label)
+local function format_breakdown_rows(rows, label, field)
+    field = field or "pct"
     if type(rows) ~= "table" or #rows == 0 then return "" end
     -- Disambiguate duplicate joker names by loadout position (e.g. two Holograms).
     local seen = {}
     for _, r in ipairs(rows) do seen[r.name] = (seen[r.name] or 0) + 1 end
-    table.sort(rows, function(a, b) return a.pct > b.pct end)
+    table.sort(rows, function(a, b) return (a[field] or 0) > (b[field] or 0) end)
     local parts = {}
     for _, r in ipairs(rows) do
-        local num = string.format("%.0f", r.pct)
-        if num ~= "0" and num ~= "-0" then      -- omit jokers that round to 0%
-            local name = r.name
-            if r.slot and (seen[name] or 0) > 1 then name = name .. " #" .. r.slot end
-            parts[#parts + 1] = name .. " " .. (r.pct >= 0 and "+" or "") .. num .. "%"
-            if #parts >= 5 then break end
+        local v = r[field]
+        if v ~= nil then
+            local num = string.format("%.0f", v)
+            if num ~= "0" and num ~= "-0" then      -- omit entries that round to 0%
+                local name = r.name
+                if r.slot and (seen[name] or 0) > 1 then name = name .. " #" .. r.slot end
+                parts[#parts + 1] = name .. " " .. (v >= 0 and "+" or "") .. num .. "%"
+                if #parts >= 5 then break end
+            end
         end
     end
     if #parts == 0 then return "" end
@@ -1496,10 +1508,12 @@ local function compute_shapley(selected)
                     phi = phi + weight * (val[mask + bit_i] - val[mask])
                 end
             end
+            -- Leave-one-out for the same player, free from the subset scores we already have.
+            local loo = ((full - (val[(total - 1) - bit_i] or 0)) / full) * 100
             if i <= n then
-                out[#out + 1] = { name = joker_name(jokers[i]), pct = (phi / full) * 100, slot = i }
+                out[#out + 1] = { name = joker_name(jokers[i]), pct = (phi / full) * 100, loo = loo, slot = i }
             else
-                out[#out + 1] = { name = planet.label, pct = (phi / full) * 100 }
+                out[#out + 1] = { name = planet.label, pct = (phi / full) * 100, loo = loo }
             end
         end
         return out
@@ -1507,7 +1521,9 @@ local function compute_shapley(selected)
 
     restore_state(snapshot)
     if not ok or type(rows) ~= "table" or #rows == 0 then return nil end
-    return format_breakdown_rows(rows, "Fair: ")
+    local fair = format_breakdown_rows(rows, "Fair: ", "pct")
+    local drop = show_both() and format_breakdown_rows(rows, "Drop: ", "loo") or nil
+    return fair, drop
 end
 
 local function compute_swap_delta(candidate)
@@ -1656,6 +1672,13 @@ function ScorePreview.preview_ui()
                 nodes = {
                     { n = G.UIT.T, config = { ref_table = ScorePreview.ui, ref_value = "breakdown", scale = scale * 0.72, colour = G.C.BLUE, shadow = true } }
                 }
+            },
+            {
+                n = G.UIT.R,
+                config = { align = "cm", padding = 0.01, maxw = 5.0 },
+                nodes = {
+                    { n = G.UIT.T, config = { ref_table = ScorePreview.ui, ref_value = "breakdown2", scale = scale * 0.72, colour = G.C.UI.TEXT_LIGHT, shadow = true } }
+                }
             }
         }
     }
@@ -1697,16 +1720,18 @@ if G and G.FUNCS and type(G.FUNCS.evaluate_play) == "function" then
             -- in their pre-hand state. Fully guarded: on any failure the real play is
             -- unaffected and the line is just cleared.
             if show_breakdown() then
-                local text = nil
+                local text, text2 = nil, ""
                 if show_shapley() then
-                    local ok, t = pcall(compute_shapley, cards)
-                    if ok then text = t end   -- nil signals fall back to leave-one-out
+                    local ok, t, t2 = pcall(compute_shapley, cards)
+                    if ok then text = t; text2 = t2 or "" end   -- t nil => fall back to LOO
                 end
                 if text == nil then
                     local ok2, t2 = pcall(compute_breakdown, cards)
                     text = (ok2 and type(t2) == "string") and t2 or ""
+                    text2 = ""
                 end
                 ScorePreview.ui.breakdown = text
+                ScorePreview.ui.breakdown2 = text2
             end
         end
         return evaluate_play_ref(e)
