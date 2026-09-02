@@ -54,6 +54,13 @@ local function show_card_breakdown()
     return cfg ~= nil and cfg.score_preview_card_breakdown == true
 end
 
+-- Restore-discards button: return every card in the discard pile to the draw pile.
+-- Balance-affecting convenience, off by default.
+local function show_restore()
+    local cfg = mod_config()
+    return cfg ~= nil and cfg.restore_discards == true
+end
+
 local function language_key()
     local lang = G and G.SETTINGS and (G.SETTINGS.real_language or G.SETTINGS.language) or nil
     return type(lang) == "string" and lang:lower() or ""
@@ -1782,6 +1789,63 @@ function ScorePreview.preview_ui()
     }
 end
 
+local function restore_button_label()
+    local lang = language_group()
+    if lang == "zh_cn" then return "弃牌回抽" end
+    if lang == "zh_tw" then return "棄牌回抽" end
+    return "Restore Discards"
+end
+
+-- Move every card in the discard pile back into the draw pile so it can be drawn again.
+-- These are existing cards being relocated, so we only remove_card/emplace -- never
+-- remove_from_deck/add_to_deck, which would delete or double-register them. Fully guarded.
+local function restore_discards_to_deck()
+    if not G or not G.deck or not G.discard or type(G.discard.cards) ~= "table" then return 0 end
+    local cards = {}
+    for _, c in ipairs(G.discard.cards) do cards[#cards + 1] = c end
+    local moved = 0
+    for _, card in ipairs(cards) do
+        if card.area and type(card.area.remove_card) == "function" then
+            pcall(function() card.area:remove_card(card) end)
+        end
+        local ok = pcall(function() G.deck:emplace(card) end)
+        if ok then moved = moved + 1 end
+    end
+    if moved > 0 then
+        if type(G.deck.shuffle) == "function" then pcall(function() G.deck:shuffle("cp_restore") end) end
+        if type(G.deck.set_ranks) == "function" then pcall(function() G.deck:set_ranks() end) end
+        if type(G.deck.align_cards) == "function" then pcall(function() G.deck:align_cards() end) end
+        if type(G.hand) == "table" and type(G.hand.align_cards) == "function" then
+            pcall(function() G.hand:align_cards() end)
+        end
+    end
+    return moved
+end
+
+G.FUNCS.comfortpack_restore_discards = function(e)
+    pcall(restore_discards_to_deck)
+end
+
+function ScorePreview.restore_button_ui()
+    return {
+        n = G.UIT.R,
+        config = { align = "cm", padding = 0.04 },
+        nodes = {
+            {
+                n = G.UIT.C,
+                config = {
+                    align = "cm", minw = 3.0, minh = 0.5, padding = 0.06, r = 0.1,
+                    colour = G.C.PURPLE, button = "comfortpack_restore_discards",
+                    hover = true, shadow = true
+                },
+                nodes = {
+                    { n = G.UIT.T, config = { text = restore_button_label(), scale = 0.32, colour = G.C.UI.TEXT_LIGHT, shadow = true } }
+                }
+            }
+        }
+    }
+end
+
 local create_UIBox_HUD_ref = create_UIBox_HUD
 function create_UIBox_HUD()
     local ui = create_UIBox_HUD_ref()
@@ -1795,11 +1859,13 @@ function create_UIBox_HUD()
     for i, row in ipairs(rows) do
         if row and row.config and row.config.id == "row_round" then
             table.insert(rows, i, ScorePreview.preview_ui())
+            if show_restore() then table.insert(rows, i + 1, ScorePreview.restore_button_ui()) end
             return ui
         end
     end
 
     rows[#rows + 1] = ScorePreview.preview_ui()
+    if show_restore() then rows[#rows + 1] = ScorePreview.restore_button_ui() end
     return ui
 end
 
